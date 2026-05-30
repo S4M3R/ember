@@ -1,13 +1,49 @@
 import { RTVIEvent } from "@pipecat-ai/client-js";
 import { usePipecatClient } from "@pipecat-ai/client-react";
-import { Microphone, MicrophoneSlash, Phone, PhoneSlash } from "@phosphor-icons/react";
+import {
+  ClipboardText,
+  Microphone,
+  MicrophoneSlash,
+  NotePencil,
+  Phone,
+  PhoneSlash,
+} from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { AGENT_OFFER_URL } from "../call";
-import type { Turn } from "../types";
+import type { ToolCall, Turn } from "../types";
 import { YcLogo } from "./YcLogo";
 
 type LiveMsg = { role: "user" | "assistant"; text: string };
+
+function toolIcon(name: string) {
+  if (name === "final_report") return <ClipboardText weight="fill" />;
+  if (name === "end_call") return <PhoneSlash weight="fill" />;
+  return <NotePencil weight="fill" />; // take_note + default
+}
+
+// The agent's tool calls for a turn, shown as chips under its reply. They arrive
+// from the side-extraction over the hub a beat after the spoken line.
+function ToolChips({ calls }: { calls?: ToolCall[] }) {
+  if (!calls || calls.length === 0) return null;
+  return (
+    <div className="tool-chips">
+      {calls.map((tc, i) => (
+        <motion.span
+          key={i}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className={`tool-chip ${tc.name}`}
+          title={tc.args || tc.name}
+        >
+          {toolIcon(tc.name)}
+          <b>{tc.name}</b>
+          {tc.args ? <span className="tool-chip-arg">{tc.args}</span> : null}
+        </motion.span>
+      ))}
+    </div>
+  );
+}
 
 // BotTtsText streams word-level chunks with no spaces ("How","can","I",...).
 // Re-join them with spaces, but not before punctuation/contractions or right
@@ -189,20 +225,36 @@ export function Transcript({
       <div className="transcript-list">
         {inCall ? (
           <>
-            {msgs.map((m, i) => {
-              const speaking = m.role === "assistant" && botSpeaking && i === msgs.length - 1;
-              return (
-                <div key={i} className={`bubble ${m.role}`}>
-                  <span className="bubble-role">
-                    {m.role === "user" ? "You" : <><YcLogo size={11} /> YC Partner</>}
-                  </span>
-                  <span className="bubble-body">
-                    {m.text}
-                    {speaking && <span className="caret" />}
-                  </span>
-                </div>
-              );
-            })}
+            {(() => {
+              // The k-th agent reply maps to the k-th hub turn (turn 0 = greeting),
+              // so its tool calls render right under that reply as they stream in.
+              // Scope to the current session's turns (id = "<session>-t<index>") so a
+              // prior call's lingering turns don't misalign the mapping.
+              const last = turns[turns.length - 1];
+              const sess = last ? last.id.split("-t")[0] : null;
+              const liveTurns = sess ? turns.filter((t) => t.id.startsWith(`${sess}-t`)) : [];
+              let agentSeen = 0;
+              return msgs.map((m, i) => {
+                const speaking = m.role === "assistant" && botSpeaking && i === msgs.length - 1;
+                let chips = null;
+                if (m.role === "assistant") {
+                  chips = <ToolChips calls={liveTurns[agentSeen]?.tool_calls} />;
+                  agentSeen++;
+                }
+                return (
+                  <div key={i} className={`bubble ${m.role}`}>
+                    <span className="bubble-role">
+                      {m.role === "user" ? "You" : <><YcLogo size={11} /> YC Partner</>}
+                    </span>
+                    <span className="bubble-body">
+                      {m.text}
+                      {speaking && <span className="caret" />}
+                    </span>
+                    {chips}
+                  </div>
+                );
+              });
+            })()}
             {interim && (
               <div className="bubble user interim">
                 <span className="bubble-role">User</span>
@@ -231,6 +283,7 @@ export function Transcript({
                 <div className="bubble assistant">
                   <span className="bubble-role"><YcLogo size={11} /> YC Partner</span>
                   <span className="bubble-body">{t.response}</span>
+                  <ToolChips calls={t.tool_calls} />
                 </div>
               </motion.div>
             ))}

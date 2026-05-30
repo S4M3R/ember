@@ -1,4 +1,4 @@
-import { Pause, Play } from "@phosphor-icons/react";
+import { GitBranch, Pause, Play } from "@phosphor-icons/react";
 import { useEffect, useRef } from "react";
 import type { Stage, StageEvent } from "../timeline";
 import { STAGE_COLOR, STAGE_LABEL } from "../timeline";
@@ -40,6 +40,8 @@ export function Timeline({
   onSeek,
   hasRecording,
   recordingUrl,
+  canResume,
+  onResumeHere,
 }: {
   events: StageEvent[];
   total: number;
@@ -54,6 +56,8 @@ export function Timeline({
   onSeek: (ms: number) => void;
   hasRecording: boolean;
   recordingUrl?: string;
+  canResume: boolean;
+  onResumeHere: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const wave = useWaveform(recordingUrl);
@@ -109,6 +113,10 @@ export function Timeline({
           {playing ? "pause" : "play call"}
         </button>
         <span className="tl-time mono">{fmt(currentMs)} / {fmt(total)}</span>
+        <button className="tl-resume" disabled={!canResume} onClick={onResumeHere}
+          title="Resume from the playhead — seed the agent with the conversation up to here and continue live">
+          <GitBranch weight="bold" size={13} /> Resume here
+        </button>
         <span className="tl-hint">real time · click to seek · scroll & zoom · STT/LLM/TTS to edit</span>
         <div className="tl-zoom">
           <button onClick={() => onZoom(Math.max(MIN_ZOOM, zoom / 1.6))} title="zoom out (show more time)">−</button>
@@ -147,27 +155,49 @@ export function Timeline({
                     </div>
                   )
                 ) : (
-                  events
-                    .filter((e) => e.kind === stage)
-                    .map((e) => (
-                      <button
-                        key={e.id}
-                        className={`tl-event ${selectedId === e.id ? "selected" : ""}`}
-                        style={{
-                          left: posPct(e.t0),
-                          width: posPct(e.t1 - e.t0),
-                          minWidth: "5px",
-                          background: STAGE_COLOR[stage],
-                        }}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          onSelect(e.id);
-                        }}
-                        title={`${STAGE_LABEL[stage]} · ${fmt(e.t0)}–${fmt(e.t1)} · ${e.label}`}
-                      >
-                        <span className="tl-event-label">{e.label}</span>
-                      </button>
-                    ))
+                  <>
+                    {events
+                      .filter((e) => e.kind === stage)
+                      .map((e) => (
+                        <button
+                          key={e.id}
+                          className={`tl-event ${selectedId === e.id ? "selected" : ""}`}
+                          style={{
+                            left: posPct(e.t0),
+                            width: posPct(e.t1 - e.t0),
+                            minWidth: "5px",
+                            background: STAGE_COLOR[stage],
+                          }}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            onSelect(e.id);
+                          }}
+                          title={`${STAGE_LABEL[stage]} · ${fmt(e.t0)}–${fmt(e.t1)} · ${e.label}`}
+                        >
+                          <span className="tl-event-label">{e.label}</span>
+                        </button>
+                      ))}
+                    {/* Tool calls annotate the LLM lane: instantaneous events, so
+                        fixed-size pins anchored at t0 with the name always shown. */}
+                    {stage === "llm" &&
+                      events
+                        .filter((e) => e.kind === "tool")
+                        .map((e) => (
+                          <button
+                            key={e.id}
+                            className={`tl-tool ${selectedId === e.id ? "selected" : ""}`}
+                            style={{ left: posPct(e.t0) }}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              onSelect(e.id);
+                            }}
+                            title={`TOOL · ${fmt(e.t0)} · ${e.label}`}
+                          >
+                            <span className="tl-tool-dot" />
+                            <span className="tl-tool-label">{e.label}</span>
+                          </button>
+                        ))}
+                  </>
                 )}
               </div>
             ))}

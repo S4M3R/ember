@@ -45,10 +45,18 @@ async def attribute(turn: Turn) -> AttributionResult:
                              baseline_logprob=round(baseline, 3), blocks=blocks)
 
 
-async def replay(turn: Turn, edited_blocks) -> ReplayResult:
-    """Re-run the turn at temperature 0 with the edited system prompt."""
-    new_blocks = apply_edits(turn.system_blocks, edited_blocks)
-    edited_joined = render_system(new_blocks)
+async def replay(turn: Turn, edited_blocks, edited_system: str | None = None) -> ReplayResult:
+    """Re-run the turn at temperature 0 with the edited system prompt.
+
+    If `edited_system` is provided it is used verbatim (free-text prompt edit);
+    otherwise the system text is rendered from the (edited) labeled blocks.
+    The (possibly edited) `turn.messages` are used as the conversation.
+    """
+    if edited_system is not None:
+        edited_joined = edited_system
+    else:
+        new_blocks = apply_edits(turn.system_blocks, edited_blocks)
+        edited_joined = render_system(new_blocks)
 
     nem = Nemotron()
     messages = [{"role": "system", "content": edited_joined}] + [

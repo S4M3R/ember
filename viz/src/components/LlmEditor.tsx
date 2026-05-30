@@ -1,58 +1,56 @@
-import { Play } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, Play } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
-import type { AttributionResult, Block, ReplayResult, Turn } from "../types";
-import { PromptHeatmap } from "./PromptHeatmap";
+import type { Block, Message, ReplayResult, Turn } from "../types";
 
-// The LLM stage: rank which system-prompt block drove the response, edit the
-// top block, replay on Nemotron, see the response change. All real.
+// Mirror the backend's render_system() so the single editor shows exactly the
+// system text the model received.
+function renderSystem(blocks: Block[]): string {
+  return blocks
+    .filter((b) => b.text.trim())
+    .map((b) => `## ${b.label}\n${b.text}`.trim())
+    .join("\n\n");
+}
+
+// The LLM stage as one editable call trace: the system prompt (collapsed by
+// default, one free-text editor) plus the user/assistant messages — all
+// editable. Replay re-runs the turn with whatever you changed.
 export function LlmEditor({ turn }: { turn: Turn }) {
-  const [attrib, setAttrib] = useState<AttributionResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [blockId, setBlockId] = useState<string | undefined>();
-  const [draft, setDraft] = useState("");
+  const origSystem = useMemo(() => renderSystem(turn.system_blocks), [turn.system_blocks]);
+  const origMsgs = useMemo<Message[]>(() => {
+    const convo = (turn.messages ?? []).filter((m) => m.role !== "system");
+    return convo.length ? convo : [{ role: "user", content: turn.user_text }];
+  }, [turn.messages, turn.user_text]);
+
+  const [sysOpen, setSysOpen] = useState(false);
+  const [sysDraft, setSysDraft] = useState(origSystem);
+  const [msgs, setMsgs] = useState<Message[]>(origMsgs);
   const [replaying, setReplaying] = useState(false);
   const [replay, setReplay] = useState<ReplayResult | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
+    setSysDraft(origSystem);
+    setMsgs(origMsgs);
+    setSysOpen(false);
     setReplay(null);
-    api
-      .attribute(turn)
-      .then((res) => {
-        if (cancelled) return;
-        setAttrib(res);
-        setBlockId(res.blocks[0]?.id);
-        setLoading(false);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setAttrib(null);
-        setError(String(e?.message ?? e));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [turn.id]);
+    setError("");
+  }, [turn.id, origSystem, origMsgs]);
 
-  const editBlock: Block | null =
-    (blockId && turn.system_blocks.find((b) => b.id === blockId)) || null;
+  const sysDirty = sysDraft !== origSystem;
+  const msgsDirty = JSON.stringify(msgs) !== JSON.stringify(origMsgs);
+  const dirty = sysDirty || msgsDirty;
 
-  useEffect(() => {
-    setDraft(editBlock?.text ?? "");
-  }, [editBlock?.id, turn.id]);
+  const setMsg = (i: number, content: string) =>
+    setMsgs((ms) => ms.map((m, j) => (j === i ? { ...m, content } : m)));
 
   async function doReplay() {
-    if (!editBlock) return;
     setReplaying(true);
+    setError("");
     try {
-      const res = await api.replay(turn, [{ ...editBlock, text: draft }]);
-      setReplay(res);
+      const modified: Turn = { ...turn, messages: msgs };
+      setReplay(await api.replay(modified, [], { editedSystem: sysDraft }));
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
     } finally {
@@ -61,74 +59,115 @@ export function LlmEditor({ turn }: { turn: Turn }) {
   }
 
   const shownResponse = replay?.response ?? turn.response;
+  const llmMs = turn.latencies?.llm_ms;
+  const sysRows = Math.min(14, Math.max(4, sysDraft.split("\n").length));
 
   return (
     <div className="editor-pane">
       <div className="editor-title">
         <span className="stage-dot" style={{ background: "#7c5cd6" }} />
-        LLM — which prompt block drove this response
+        LLM — call trace · edit and replay to test
       </div>
 
-      <div className="llm-grid">
-        <PromptHeatmap
-          blocks={turn.system_blocks}
-          attribution={attrib}
-          loading={loading}
-          error={error}
-          selectedBlock={blockId}
-          onSelectBlock={setBlockId}
-        />
+      <div className="llm-trace">
+        <section className="trace-col">
+          <div className="trace-head">
+            input
+            {llmMs != null && <span className="trace-lat mono">{Math.round(llmMs)} ms</span>}
+          </div>
+          <div className="trace-msgs">
+            <div className="trace-msg system">
+              <button className="sys-toggle" onClick={() => setSysOpen((o) => !o)}>
+                {sysOpen ? <CaretDown weight="bold" size={12} /> : <CaretRight weight="bold" size={12} />}
+                <span className="trace-role" style={{ margin: 0 }}>system prompt</span>
+                {sysDirty && <span className="sys-dot" title="edited" />}
+                <span className="sys-hint">{sysOpen ? "hide" : "edit"}</span>
+              </button>
+              {sysOpen && (
+                <textarea
+                  className="block-edit-text sys-edit"
+                  value={sysDraft}
+                  onChange={(e) => setSysDraft(e.target.value)}
+                  rows={sysRows}
+                  spellCheck={false}
+                />
+              )}
+            </div>
 
-        <div className="llm-right">
-          <div className="resp-label">agent response{replay ? " (after edit)" : ""}</div>
+            {msgs.map((m, i) => {
+              const isChanged = m.content !== origMsgs[i]?.content;
+              return (
+                <div key={i} className={`trace-msg ${m.role} ${isChanged ? "changed" : ""}`}>
+                  <div className="trace-role">
+                    {m.role}
+                    {isChanged && (
+                      <button
+                        className="block-reset"
+                        title="revert this message"
+                        onClick={() => setMsg(i, origMsgs[i]?.content ?? "")}
+                      >
+                        revert
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    className="block-edit-text"
+                    value={m.content}
+                    onChange={(e) => setMsg(i, e.target.value)}
+                    rows={Math.min(8, Math.max(1, m.content.split("\n").length))}
+                    spellCheck={false}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="trace-col">
+          <div className="trace-head">output{replay ? " · after edit" : ""}</div>
           <AnimatePresence mode="wait">
             <motion.div
               key={shownResponse}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className={`resp-text ${replay?.changed ? "resp-fixed" : ""}`}
+              className={`trace-msg assistant out ${replay?.changed ? "changed" : ""}`}
             >
-              {shownResponse}
+              <div className="trace-role">assistant</div>
+              <div className="trace-body">{shownResponse}</div>
             </motion.div>
           </AnimatePresence>
 
-          <div className="editor">
-            <div className="editor-head">
-              Edit block {editBlock ? <code>## {editBlock.label}</code> : "—"} and replay
-            </div>
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              disabled={!editBlock}
-              rows={5}
-              spellCheck={false}
-            />
-            <motion.button
-              className="replay-btn"
-              whileTap={{ scale: 0.97 }}
-              disabled={!editBlock || replaying}
-              onClick={doReplay}
-            >
-              {replaying ? (
-                "replaying at temp 0…"
-              ) : (
-                <>
-                  <Play weight="fill" /> Replay turn with edit
-                </>
-              )}
-            </motion.button>
-            {replay?.changed && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="fixed-banner"
-              >
-                Response changed — one block edited.
-              </motion.div>
+          <motion.button
+            className="replay-btn"
+            whileTap={{ scale: 0.97 }}
+            disabled={replaying}
+            onClick={doReplay}
+          >
+            {replaying ? (
+              "replaying at temp 0…"
+            ) : (
+              <>
+                <Play weight="fill" /> {dirty ? "Replay with edits" : "Replay turn"}
+              </>
             )}
-          </div>
-        </div>
+          </motion.button>
+          {dirty && !replay && (
+            <div className="muted-note">edited — replay to test what changes.</div>
+          )}
+          {error && <div className="heat-error">{error}</div>}
+          {replay && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`fixed-banner ${replay.changed ? "" : "nochange"}`}
+            >
+              {replay.changed
+                ? "Response changed with your edits."
+                : "Same response — your edits didn't move the output."}
+            </motion.div>
+          )}
+        </section>
       </div>
     </div>
   );

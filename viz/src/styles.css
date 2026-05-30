@@ -81,15 +81,6 @@ body {
 .logo { font-size: 26px; color: var(--accent); filter: drop-shadow(0 1px 1px rgba(217,72,0,.35)); }
 .brand-name { font-weight: 700; font-size: 18px; color: var(--ink); }
 .brand-sub { font-size: 12px; color: var(--muted); }
-.status { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--muted); }
-.stat b { color: var(--ink); font-size: 15px; }
-.conn { display: inline-flex; align-items: center; gap: 7px; text-transform: uppercase;
-  font-size: 11px; letter-spacing: .6px; padding: 4px 10px; border-radius: 99px;
-  border: 1px solid var(--line-strong); background: var(--grad-surface); box-shadow: var(--sh-xs); }
-.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-soft); }
-.conn-live .dot { background: var(--pass); box-shadow: 0 0 8px rgba(31,138,101,.7); }
-.conn-connecting .dot { background: var(--accent); animation: pulse 1s infinite; }
-.conn-closed .dot { background: var(--fail); }
 @keyframes pulse { 50% { opacity: .35; } }
 
 /* main editor frame */
@@ -121,11 +112,19 @@ body {
 .bubble.user .bubble-role { color: var(--muted); }
 .bubble.assistant .bubble-role { color: var(--accent-active); }
 .bubble-body { white-space: pre-wrap; }
+/* Agent tool calls, shown as chips under the reply they belong to. */
+.tool-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tool-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  padding: 3px 9px 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: color-mix(in srgb, var(--tool, #0d9488) 14%, transparent);
+  color: #0b6b62; border: 1px solid color-mix(in srgb, var(--tool, #0d9488) 38%, transparent); }
+.tool-chip svg { flex: none; color: var(--tool, #0d9488); }
+.tool-chip b { font-family: var(--mono); font-weight: 700; }
+.tool-chip-arg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-weight: 500; }
 
 /* Y Combinator mark */
-.yc-logo { display: inline-flex; align-items: center; justify-content: center;
-  background: #ff6600; color: #fff; border-radius: 22%; font-weight: 800;
-  font-family: Georgia, "Times New Roman", serif; line-height: 1; flex-shrink: 0;
+.yc-logo { display: inline-block; vertical-align: middle; flex-shrink: 0;
   box-shadow: var(--sh-xs); }
 
 /* who you're talking to (callee banner) */
@@ -164,6 +163,58 @@ body {
 .editor-title { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600;
   color: var(--ink); padding: 8px 0 14px; }
 .stage-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: var(--sh-xs); }
+
+/* LLM editor: tabs (Trace / System prompt) */
+.llm-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.llm-tab { position: relative; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--muted); background: none; border: none; padding: 8px 12px; margin-bottom: -1px;
+  border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 6px; }
+.llm-tab:hover { color: var(--ink); }
+.llm-tab.active { color: var(--accent-active); border-bottom-color: var(--accent); }
+.llm-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(255,102,0,.6); }
+
+/* LLM trace: input messages -> output */
+.llm-trace { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; align-items: start; }
+.trace-col { display: flex; flex-direction: column; min-width: 0; }
+.trace-head { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.trace-lat { margin-left: auto; font-size: 11px; color: var(--body); background: var(--surface-strong);
+  padding: 1px 7px; border-radius: 99px; }
+.trace-msgs { display: flex; flex-direction: column; gap: 8px; }
+.trace-msg { border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 10px;
+  background: var(--surface); box-shadow: var(--sh-xs); padding: 8px 11px; min-width: 0; }
+.trace-msg.system { border-left-color: var(--muted-soft); }
+.trace-msg.user { border-left-color: var(--stt); }
+.trace-msg.assistant { border-left-color: var(--llm); }
+.trace-msg.out { box-shadow: var(--sh-sm); }
+.trace-msg.out.changed { border-color: var(--pass); border-left-color: var(--pass);
+  box-shadow: 0 0 0 1px rgba(31,138,101,.4), var(--sh-md); }
+.trace-role { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin-bottom: 4px; }
+.trace-body { font-size: 13px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+pre.trace-body { margin: 0; max-height: 200px; overflow: auto; font-size: 12px; color: var(--body);
+  background: var(--canvas-soft); border-radius: 8px; padding: 8px 10px; box-shadow: var(--sh-inset); }
+.llm-tab-link { align-self: flex-start; margin-top: 10px; cursor: pointer; font: inherit; font-size: 12px;
+  font-weight: 600; color: var(--accent-active); background: none; border: none; padding: 0; }
+.llm-tab-link:hover { text-decoration: underline; }
+
+/* editable trace: system prompt (collapsible) + messages */
+.sys-toggle { display: flex; align-items: center; gap: 6px; width: 100%; cursor: pointer; font: inherit;
+  background: none; border: none; padding: 0; color: var(--muted); }
+.sys-toggle:hover { color: var(--ink); }
+.sys-toggle svg { color: var(--muted); flex: none; }
+.sys-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(255,102,0,.6); }
+.sys-hint { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted-soft); }
+.block-reset { margin-left: auto; cursor: pointer; font: inherit; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .4px; color: var(--muted); background: none; border: none; padding: 0; }
+.block-reset:hover { color: var(--fail); }
+.block-edit-text { width: 100%; resize: vertical; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; font-family: var(--mono);
+  font-size: 12px; line-height: 1.5; box-shadow: var(--sh-inset); }
+.block-edit-text:focus { outline: none; border-color: var(--accent); box-shadow: var(--sh-inset), 0 0 0 3px var(--accent-tint); }
+.sys-edit { margin-top: 8px; }
+.trace-msg.changed .block-edit-text { border-color: var(--accent); }
+.fixed-banner.nochange { color: var(--muted); background: var(--surface-strong); border-color: var(--line-strong); }
 
 /* LLM editor: heatmap + response/edit */
 .llm-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 16px; }
@@ -241,7 +292,7 @@ body {
 @keyframes spin-pulse { 0%,100% { opacity: .55; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.08); } }
 
 /* TIMELINE (bottom) */
-.timeline-editor { flex-shrink: 0; height: 264px; border-top: 1px solid var(--line);
+.timeline-editor { flex-shrink: 0; height: 300px; border-top: 1px solid var(--line);
   background: var(--canvas-soft); padding: 10px 18px 14px; display: flex; flex-direction: column; }
 .tl-head { display: flex; align-items: center; gap: 14px; font-size: 12px; text-transform: uppercase;
   letter-spacing: .6px; color: var(--muted); margin-bottom: 10px; }
@@ -254,6 +305,14 @@ body {
 .tl-play:disabled { opacity: .4; cursor: not-allowed; box-shadow: var(--sh-xs); }
 .tl-event.playing { outline: 2px solid var(--accent); opacity: 1; animation: clip-pulse 1s infinite; }
 @keyframes clip-pulse { 50% { box-shadow: 0 0 16px rgba(255,102,0,.55); } }
+.tl-resume { cursor: pointer; font: inherit; font-weight: 700; font-size: 12px; letter-spacing: .3px;
+  display: inline-flex; align-items: center; gap: 6px; color: var(--tool, #0d9488);
+  background: var(--grad-surface); border: 1px solid color-mix(in srgb, var(--tool, #0d9488) 45%, transparent);
+  border-radius: 99px; padding: 5px 14px; box-shadow: var(--sh-xs); text-transform: none; }
+.tl-resume:hover:not(:disabled) { background: color-mix(in srgb, var(--tool, #0d9488) 12%, white);
+  border-color: var(--tool, #0d9488); }
+.tl-resume:active:not(:disabled) { transform: translateY(1px); }
+.tl-resume:disabled { opacity: .38; cursor: not-allowed; }
 .tl-hint { text-transform: none; letter-spacing: 0; font-size: 11px; opacity: .8; }
 .tl-time { font-family: var(--mono); color: var(--ink); font-size: 12px; }
 .tl-zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
@@ -281,6 +340,22 @@ body {
 .tl-event.selected { outline: 2px solid var(--accent); opacity: 1; z-index: 3;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 0 0 1px var(--accent), var(--sh-md); }
 .tl-event-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Tool calls are point events — fixed-size pin marker, name always visible,
+   doesn't shrink with zoom. */
+/* Annotation pinned to the top of the LLM lane; stem points down at the exact t0. */
+.tl-tool { position: absolute; top: -7px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 5px; border: none;
+  border-radius: 999px; background: var(--tool, #0d9488); color: #fff; font: inherit;
+  font-size: 10px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; z-index: 7;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), var(--sh-sm); opacity: .96; transition: opacity .12s; }
+.tl-tool::before { content: ""; position: absolute; left: 7px; bottom: -6px; width: 2px; height: 6px;
+  background: var(--tool, #0d9488); z-index: -1; }
+.tl-tool:hover { opacity: 1; }
+.tl-tool.selected { outline: 2px solid var(--accent); z-index: 6;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 1px var(--accent), var(--sh-md); }
+.tl-tool-dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; flex: none;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+.tl-tool-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 .tl-rec { position: absolute; top: 5px; bottom: 5px; border-radius: 6px; z-index: 1; overflow: hidden;
   background: var(--audio); display: flex; align-items: center; padding: 0 10px; box-shadow: var(--sh-inset); }
 .tl-rec-label { font-family: var(--mono); font-size: 11px; font-weight: 700; color: #fff;

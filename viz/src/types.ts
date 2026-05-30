@@ -20,8 +20,10 @@ export interface Latencies {
 
 export interface ToolCall {
   name: string;
-  args?: Record<string, unknown>;
-  result?: unknown;
+  t0?: number; // ms from call start
+  t1?: number;
+  args?: string;
+  result?: string;
 }
 
 // Real wall-clock spans (ms from call start) for each pipeline stage of a turn.

@@ -48,6 +48,9 @@ class ReplayRequest(BaseModel):
     turn: Turn
     # Edited blocks override the turn's system_blocks by id; others kept as-is.
     edited_blocks: list[Block] = []
+    # Raw system-prompt override. When set, used verbatim instead of rendering
+    # the (edited) blocks — lets the UI edit the whole prompt as free text.
+    edited_system: str | None = None
 
 
 class ReplayResult(BaseModel):

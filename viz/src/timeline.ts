@@ -5,7 +5,7 @@
 
 import type { Turn } from "./types";
 
-export type Stage = "stt" | "llm" | "tts" | "audio";
+export type Stage = "stt" | "llm" | "tts" | "tool" | "audio";
 
 export interface StageEvent {
   id: string;
@@ -52,6 +52,11 @@ export function buildTimeline(
       if (stt) events.push({ id: `${t.id}-stt`, turnId: t.id, index: t.index, kind: "stt", t0: stt[0], t1: stt[1], label: t.user_text });
       if (llm) events.push({ id: `${t.id}-llm`, turnId: t.id, index: t.index, kind: "llm", t0: llm[0], t1: llm[1], label: t.response });
       if (tts) events.push({ id: `${t.id}-tts`, turnId: t.id, index: t.index, kind: "tts", t0: tts[0], t1: tts[1], label: t.response });
+      (t.tool_calls ?? []).forEach((tc, i) => {
+        if (tc.t0 == null) return;
+        events.push({ id: `${t.id}-tool-${i}`, turnId: t.id, index: t.index, kind: "tool",
+          t0: tc.t0, t1: Math.max(tc.t1 ?? tc.t0, tc.t0 + 120), label: tc.name });
+      });
     }
   } else {
     // synthetic fallback (no real timestamps)
@@ -73,10 +78,13 @@ export function buildTimeline(
   return { events, total };
 }
 
-export const STAGE_LABEL: Record<Stage, string> = { stt: "STT", llm: "LLM", tts: "TTS", audio: "AUDIO" };
+export const STAGE_LABEL: Record<Stage, string> = {
+  stt: "STT", llm: "LLM", tts: "TTS", tool: "TOOL", audio: "AUDIO",
+};
 export const STAGE_COLOR: Record<Stage, string> = {
   stt: "#3b82c4",
   llm: "#7c5cd6",
   tts: "#2f8a64",
+  tool: "#0d9488",
   audio: "#a06a1f",
 };

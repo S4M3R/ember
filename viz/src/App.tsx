@@ -5,17 +5,20 @@ import { useEffect, useMemo, useState } from "react";
 import { StageEditor } from "./components/StageEditor";
 import { Timeline } from "./components/Timeline";
 import { Transcript } from "./components/Transcript";
+import { AGENT_OFFER_URL } from "./call";
 import { buildTimeline, type StageEvent } from "./timeline";
+import type { Turn } from "./types";
 import { useLiveClock } from "./useLiveClock";
 import { useRecordingPlayer } from "./useRecordingPlayer";
 import { useSession } from "./useSession";
 
 export default function App() {
-  const { turns, recording, conn, reset } = useSession();
+  const { turns, recording, reset, send } = useSession();
   const player = useRecordingPlayer(recording?.url);
 
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [zoom, setZoom] = useState(1);
+  const [resumedFrom, setResumedFrom] = useState<number | null>(null);
 
   // Track whether a call is active (disable "play call" + drive the live clock).
   const client = usePipecatClient();
@@ -60,6 +63,40 @@ export default function App() {
     reset();
     setSelectedId(undefined);
     setZoom(1);
+    setResumedFrom(null);
+  }
+
+  // The turn the playhead is sitting in (or just before) — the branch point.
+  function turnAtMs(ms: number): Turn | null {
+    if (turns.length === 0) return null;
+    const sorted = [...turns].sort((a, b) => (a.now_ms ?? 0) - (b.now_ms ?? 0));
+    for (const t of sorted) if ((t.now_ms ?? 0) >= ms) return t;
+    return sorted[sorted.length - 1];
+  }
+
+  // Resume the conversation from a chosen turn: seed the agent with the history
+  // through that turn, wipe the canvas, and start a fresh call. The partner keeps
+  // every prior message in context; you continue from that one point.
+  async function resumeFrom(turn: Turn | null) {
+    if (!turn || callActive) return;
+    const prior = (turn.messages ?? []).filter(
+      (m) => (m.role === "user" || m.role === "assistant") && m.content,
+    );
+    const seed = [...prior, { role: "assistant", content: turn.response }];
+    if (!send({ type: "seed", messages: seed })) {
+      console.error("[ember] resume: hub socket not open");
+      return;
+    }
+    reset();
+    setSelectedId(undefined);
+    setResumedFrom(turn.index);
+    // Let the seed reach the hub before the WebRTC handshake fires on_connected.
+    await new Promise((r) => setTimeout(r, 150));
+    try {
+      await client.connect({ webrtcRequestParams: { endpoint: AGENT_OFFER_URL } } as never);
+    } catch (e) {
+      console.error("[ember] resume connect failed:", e);
+    }
   }
 
   return (
@@ -76,26 +113,25 @@ export default function App() {
             <div className="brand-sub">an editor for voice agent calls</div>
           </div>
         </button>
-        <div className="status">
-          <span className="stat"><b>{turns.length}</b> turns</span>
-          <span className={`conn conn-${conn}`}><span className="dot" /> {conn}</span>
-        </div>
       </header>
 
       <div className="editor-main">
         <div className="editor-top">
           <div className="stage-host">
             {selectedTurn && selectedEvent ? (
-              <StageEditor kind={selectedEvent.kind} turn={selectedTurn} />
+              <StageEditor kind={selectedEvent.kind} turn={selectedTurn} eventId={selectedEvent.id} />
             ) : turns.length === 0 ? (
               <div className="stage-empty">
-                <div className="empty-big">No call yet</div>
-                <p>Start talking to the agent — every turn streams in here live, split into
-                STT, LLM, TTS, and a stereo recording on a real-time timeline. Click any event
-                below to edit that stage.</p>
-                <p className="muted-note">
-                  status: <b>{conn}</b> · listening on the agent's event stream
-                </p>
+                <div className="empty-big">{resumedFrom != null ? "Resuming…" : "No call yet"}</div>
+                {resumedFrom != null ? (
+                  <p>Resumed from turn {resumedFrom + 1}. The partner remembers everything up to
+                  that point — keep talking to continue this branch. New turns stream in below.</p>
+                ) : (
+                  <p>Start talking to the agent — every turn streams in here live, split into
+                  STT, LLM, TTS, and a stereo recording on a real-time timeline. Click any event
+                  below to edit that stage.</p>
+                )}
+                <p className="muted-note">listening on the agent's event stream</p>
               </div>
             ) : (
               <div className="stage-empty">Click an event on the timeline to edit that stage.</div>
@@ -125,6 +161,8 @@ export default function App() {
           onSeek={player.seekMs}
           hasRecording={!!recording && !callActive}
           recordingUrl={recording?.url}
+          canResume={turns.length > 0 && !callActive}
+          onResumeHere={() => resumeFrom(selectedTurn ?? turnAtMs(headMs))}
         />
       </div>
     </div>

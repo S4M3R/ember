@@ -10,6 +10,7 @@ also bypass frame introspection entirely and call `record_turn(...)` yourself.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -17,6 +18,63 @@ import os
 import time
 import uuid
 import wave
+
+import httpx
+
+# Nemotron can't do native function calls on this endpoint, so after each turn we
+# run a fast guided_json side-call to decide the partner's tool actions (notes,
+# final report, end), and surface them as real tool events on the timeline.
+# Env is read lazily (the agent calls load_dotenv after importing this module).
+def _nem_url() -> str:
+    return os.getenv("NEMOTRON_LLM_URL", "").rstrip("/")
+
+
+def _nem_model() -> str:
+    return os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super")
+
+
+_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "end": {"type": "boolean"},
+        "report": {
+            "type": ["object", "null"],
+            "properties": {"verdict": {"type": "string"}, "reasons": {"type": "string"}},
+        },
+    },
+    "required": ["notes", "end"],
+}
+_EXTRACT_SYS = (
+    "You log a YC partner's tool actions during rapid office hours. Given the founder's "
+    "last message and the partner's reply, decide: "
+    "notes = 1-2 short third-person notes capturing anything concrete the founder said about "
+    "their startup (what they're building, who the user is, traction/revenue, the ask, or a "
+    "red flag). Take a note whenever the founder states a real fact about their company. "
+    "Only return [] when the founder said nothing substantive (greeting, filler, 'um'). "
+    "end = true if the partner is wrapping up or ending the call (says goodbye, 'we're done', "
+    "'ending this call', 'come back when…'), or the founder clearly isn't ready. "
+    "report = a {verdict, reasons} object only if the partner is giving a final verdict, "
+    "else null. Output JSON only."
+)
+
+
+async def _extract_tools_nemotron(user_text: str, response: str) -> dict:
+    body = {
+        "model": _nem_model(),
+        "messages": [
+            {"role": "system", "content": _EXTRACT_SYS},
+            {"role": "user", "content": f"FOUNDER: {user_text}\nPARTNER: {response}"},
+        ],
+        "temperature": 0,
+        "max_tokens": 220,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "guided_json": _EXTRACT_SCHEMA,
+    }
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{_nem_url()}/chat/completions", json=body, timeout=20)
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
 
 # Debug capture: with EMBER_DEBUG=1 the observer dumps every frame (name +
 # timestamp + key fields) to a JSONL, plus the stereo recording WAV + audio chunk
@@ -40,6 +98,17 @@ def _wav_b64(pcm: bytes, sample_rate: int, channels: int = 1) -> str:
         w.setframerate(sample_rate)
         w.writeframes(pcm)
     return "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _short(v, n=140):
+    """Compact string for a tool-call's args/result (for the timeline tooltip)."""
+    if v is None:
+        return None
+    try:
+        s = v if isinstance(v, str) else json.dumps(v, default=str)
+    except Exception:
+        s = str(v)
+    return s[:n]
 
 
 REC_RATE = 16000  # master rate for the mono call recording
@@ -124,6 +193,11 @@ class EmberObserver(BaseObserver):
             pass
         self.hub = hub
         self.system_blocks = system_blocks or SYSTEM_BLOCKS
+        # Set by the bot to actually hang up when side-extraction decides end==True
+        # (Nemotron can't call the real end_call tool). Called once, after the
+        # agent's closing line has been spoken. Async, takes no args.
+        self.on_tool_end = None
+        self._ended = False
         self.history: list[dict] = []   # prior {role, content} messages
         self.index = 0
         self.session = uuid.uuid4().hex[:6]  # unique per connection -> no id collisions
@@ -154,6 +228,7 @@ class EmberObserver(BaseObserver):
         self.t_user = self.t_llm0 = self.t_llm1 = self.t_tts0 = None
         self.tts_pcm = bytearray()      # agent voice (TTS output)
         self.tts_sr = 24000
+        self.tool_events = []           # [{name, t0, t1, args, result}] this turn
 
     def _dbg(self, name, now, frame):
         if not _DEBUG or name in _AUDIO_FRAME_NAMES:
@@ -183,15 +258,24 @@ class EmberObserver(BaseObserver):
         self._dbg(name, now, frame)
 
         if name == "TranscriptionFrame":               # final STT result
-            txt = getattr(frame, "text", "") or ""
-            if txt.strip():
-                self.user_text = txt.strip()
+            seg = (getattr(frame, "text", "") or "").strip()
+            if seg:
+                # One spoken answer can arrive as several finals ("I'm building
+                # Salto." / "and it's for" / "Boise engineers."). Join them into
+                # one turn instead of overwriting — otherwise only the last
+                # fragment reaches the timeline.
+                self.user_text = f"{self.user_text} {seg}" if self.user_text else seg
+                if self.t_stt_start is None:
+                    self.t_stt_start = now
                 self.t_user = now
                 await self._broadcast_partial(now)     # STT appears live
         elif name == "UserStartedSpeakingFrame":       # VAD: speech onset
-            self.t_speech_start = now
+            # First onset of the turn — keep it so the STT bar spans the whole
+            # utterance, not just the last fragment.
+            if self.t_speech_start is None:
+                self.t_speech_start = now
         elif name == "UserStoppedSpeakingFrame":       # VAD: speech offset
-            self.t_speech_end = now
+            self.t_speech_end = now                     # latest offset of the turn
         elif name == "LLMFullResponseStartFrame":
             self.t_llm0 = now
             self.parts = []
@@ -203,6 +287,22 @@ class EmberObserver(BaseObserver):
         elif name == "LLMFullResponseEndFrame":
             self.t_llm1 = now
             await self._broadcast_partial(now)         # LLM appears live
+        elif name == "FunctionCallInProgressFrame":     # a tool call started
+            fn = getattr(frame, "function_name", None) or "tool"
+            self.tool_events.append({
+                "name": fn, "t0": now, "t1": None,
+                "args": _short(getattr(frame, "arguments", None)), "result": None,
+            })
+            await self._broadcast_partial(now)          # tool appears live
+        elif name == "FunctionCallResultFrame":         # a tool call returned
+            fn = getattr(frame, "function_name", None) or "tool"
+            res = _short(getattr(frame, "result", None))
+            for te in reversed(self.tool_events):
+                if te["name"] == fn and te["t1"] is None:
+                    te["t1"] = now
+                    te["result"] = res
+                    break
+            await self._broadcast_partial(now)
         elif name == "InputAudioRawFrame":              # caller mic audio
             audio = getattr(frame, "audio", b"") or b""
             sr = getattr(frame, "sample_rate", self.user_sr)
@@ -255,6 +355,17 @@ class EmberObserver(BaseObserver):
             "tts": [off(self.t_tts0), off(tts_end if self.t_tts0 else None)],
         }
 
+    def _tool_calls(self, now):
+        def off(t):
+            return int((t - self.call_start) * 1000) if t else None
+        return [{
+            "name": te["name"],
+            "t0": off(te["t0"]),
+            "t1": off(te["t1"] or now),   # still-open tool grows to now
+            "args": te.get("args"),
+            "result": te.get("result"),
+        } for te in self.tool_events]
+
     async def _broadcast_partial(self, now):
         """Broadcast the turn-in-progress so the timeline fills stage-by-stage in
         real time. The viz updates the turn by id; the final emit replaces it with
@@ -269,7 +380,7 @@ class EmberObserver(BaseObserver):
             "messages": [],
             "latencies": {},
             "trace": self._trace(now),
-            "tool_calls": [],
+            "tool_calls": self._tool_calls(now),
             "stt_confidence": None,
             "partial": True,
             "now_ms": int((now - self.call_start) * 1000),  # live call clock
@@ -284,11 +395,59 @@ class EmberObserver(BaseObserver):
         # Emit on any agent reply, even with no user turn — that's the greeting,
         # so it shows up on the timeline (LLM + TTS, no STT).
         if resp:
-            await self.record_turn(self.user_text or "", resp, now)
+            turn = await self.record_turn(self.user_text or "", resp, now)
+            # Nemotron can't call tools natively, so fire a background guided_json
+            # side-call to decide the partner's tool actions for this turn.
+            asyncio.create_task(self._extract_tools(turn))
         self._reset()
         # Update the full-call recording after every agent utterance (incl. the
         # greeting), so "play call" works even before the first user turn.
         await self._broadcast_recording()
+
+    async def _extract_tools(self, turn):
+        """Background: ask Nemotron (guided_json) which tools the partner used this
+        turn, then re-broadcast the turn with real tool events on the TOOL track."""
+        if not _nem_url() or not turn:
+            return
+        try:
+            data = await _extract_tools_nemotron(
+                turn.get("user_text", ""), turn.get("response", ""))
+        except Exception as e:  # noqa: BLE001 - best-effort
+            print(f"[ember] tool-extract FAILED: {e!r}", flush=True)
+            return
+        print(f"[ember] tool-extract: {data}", flush=True)
+        notes = data.get("notes") or []
+        report = data.get("report")
+        end = bool(data.get("end"))
+        base = (turn.get("trace", {}).get("llm") or [None, None])[1] or turn.get("now_ms") or 0
+        tcs, t = [], base
+        for note in notes[:2]:
+            if not note:
+                continue
+            tcs.append({"name": "take_note", "t0": t, "t1": t + 150,
+                        "args": str(note)[:140], "result": "noted"})
+            t += 240
+        if report:
+            tcs.append({"name": "final_report", "t0": t, "t1": t + 150,
+                        "args": json.dumps(report)[:140], "result": report.get("verdict", "")})
+            t += 240
+        if end:
+            tcs.append({"name": "end_call", "t0": t, "t1": t + 150, "args": "", "result": "ended"})
+        if tcs:
+            out = dict(turn)
+            out["tool_calls"] = tcs
+            await self.hub.broadcast({"type": "turn", "turn": out})
+        # Actually hang up. _emit fires on BotStoppedSpeaking (the goodbye has
+        # finished playing), so end shortly after — just enough to flush the last
+        # audio packet on the client before the transport tears down.
+        if end and self.on_tool_end and not self._ended:
+            self._ended = True
+            print("[ember] end intent -> hanging up", flush=True)
+            await asyncio.sleep(0.6)
+            try:
+                await self.on_tool_end()
+            except Exception as e:  # noqa: BLE001 - best-effort hangup
+                print(f"[ember] hangup failed: {e!r}", flush=True)
 
     async def _broadcast_recording(self):
         try:
@@ -354,7 +513,7 @@ class EmberObserver(BaseObserver):
             "messages": messages,
             "latencies": latencies,
             "trace": trace,
-            "tool_calls": tool_calls or [],
+            "tool_calls": self._tool_calls(now),
             "stt_confidence": None,
             "partial": False,
             "now_ms": int((now - self.call_start) * 1000),

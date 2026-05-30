@@ -22,8 +22,16 @@ export async function attribute(turn: Turn): Promise<AttributionResult> {
   return post<AttributionResult>("/attribute", turn); // default method=llm
 }
 
-export async function replay(turn: Turn, editedBlocks: Block[]): Promise<ReplayResult> {
-  return post<ReplayResult>("/replay", { turn, edited_blocks: editedBlocks });
+export async function replay(
+  turn: Turn,
+  editedBlocks: Block[] = [],
+  opts?: { editedSystem?: string },
+): Promise<ReplayResult> {
+  return post<ReplayResult>("/replay", {
+    turn,
+    edited_blocks: editedBlocks,
+    edited_system: opts?.editedSystem,
+  });
 }
 
 export async function synthesize(text: string, voice: string): Promise<SynthesizeResult> {

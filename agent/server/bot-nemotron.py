@@ -123,34 +123,38 @@ async def run_bot(
     """
     logger.info("Starting bot")
 
-    # Per-call state: founder signals the partner logs during office hours.
-    signals: list = []
+    # Per-call state: notes the partner jots during office hours.
+    notes: list = []
 
-    async def record_signal(
-        params: FunctionCallParams, signal: str, strength: str = "weak"
+    async def take_note(params: FunctionCallParams, note: str) -> None:
+        """Jot a note about what you just learned — a signal, a fact, or a red flag.
+        Call this whenever the founder reveals something worth remembering.
+
+        Args:
+            note: One short line, e.g. "named a specific paying customer".
+        """
+        notes.append(note)
+        await params.result_callback({"ok": True, "noted": note, "count": len(notes)})
+
+    async def final_report(
+        params: FunctionCallParams, verdict: str, reasons: str, next_step: str = ""
     ) -> None:
-        """Log a founder signal you just heard. Call this the moment the founder
-        reveals something real or a red flag.
+        """Produce the final office-hours report at the end of the session.
 
         Args:
-            signal: Short description, e.g. "named a specific paying customer".
-            strength: "strong" or "weak".
+            verdict: One of "advance", "maybe", or "pass".
+            reasons: One or two short sentences on why.
+            next_step: The single concrete next action for the founder.
         """
-        signals.append({"signal": signal, "strength": strength})
-        await params.result_callback({"ok": True, "logged": signal, "count": len(signals)})
-
-    async def give_verdict(params: FunctionCallParams, decision: str, reason: str) -> None:
-        """Give your office-hours verdict. Call once, after at most two exchanges.
-
-        Args:
-            decision: One of "advance", "maybe", or "pass".
-            reason: One short sentence of why.
-        """
-        logger.info(f"Verdict: {decision} -- {reason} (signals={signals})")
-        await params.result_callback({"ok": True, "decision": decision, "reason": reason})
+        logger.info(f"Final report: {verdict} -- {reasons} | next: {next_step} | notes={notes}")
+        await params.result_callback(
+            {"ok": True, "verdict": verdict, "reasons": reasons,
+             "next_step": next_step, "notes": notes}
+        )
 
     async def end_call(params: FunctionCallParams) -> None:
-        """End office hours. Only call this AFTER your closing line in the same turn."""
+        """End office hours. Call this AFTER your closing line in the same turn —
+        either because the founder isn't ready, or right after final_report."""
         logger.info("end_call invoked -- pushing EndTaskFrame upstream")
         await params.llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
         await params.result_callback(
@@ -158,8 +162,8 @@ async def run_bot(
         )
 
     tool_functions = [
-        record_signal,
-        give_verdict,
+        take_note,
+        final_report,
         end_call,
     ]
     tools = ToolsSchema(standard_tools=tool_functions)
@@ -298,6 +302,7 @@ async def run_bot(
     # (ws://localhost:8765) for live attribution. The hub is a process-wide
     # singleton started once — and a hub failure must NEVER crash the call.
     ember_observers = []
+    ember_hub = None
     try:
         ember_hub = await shared_hub()
         ember_observers = [EmberObserver(ember_hub, ember_blocks)]
@@ -315,10 +320,38 @@ async def run_bot(
         ),
     )
 
+    # Nemotron can't call the registered end_call tool, so the observer's
+    # side-extraction detects the end intent and triggers the real hangup here.
+    async def _hang_up():
+        logger.info("Ember side-extraction -> ending call (EndTaskFrame)")
+        await worker.queue_frames([EndTaskFrame()])
+
+    for _obs in ember_observers:
+        _obs.on_tool_end = _hang_up
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected")
-        # Kick off the conversation
+        # "Resume from here": the viz seeded the prior conversation over the hub.
+        # Replay it into the context so the partner remembers everything up to the
+        # branch point, then let the founder keep talking (no greeting kickoff).
+        seed = getattr(ember_hub, "pending_seed", None) if ember_hub else None
+        if seed:
+            ember_hub.pending_seed = None  # consume once
+            for msg in seed:
+                if isinstance(msg, dict) and msg.get("role") in ("user", "assistant") and msg.get("content"):
+                    context.add_message({"role": msg["role"], "content": msg["content"]})
+            # Mirror the history into the observer so replays of resumed turns
+            # carry the full prior conversation.
+            for _obs in ember_observers:
+                _obs.history = [m for m in seed
+                                if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+            logger.info(f"Resumed from seed: {len(seed)} prior messages")
+            # If the branch point ends on the founder, answer it; otherwise wait.
+            if seed and seed[-1].get("role") == "user":
+                await worker.queue_frames([LLMRunFrame()])
+            return
+        # Fresh call: kick off office hours with the opening line.
         context.add_message(
             {
                 "role": "user",

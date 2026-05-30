@@ -68,7 +68,7 @@ async def attribute(turn: Turn, method: str = "llm"):
 @app.post("/replay", response_model=ReplayResult)
 async def replay(req: ReplayRequest):
     try:
-        return await core.replay(req.turn, req.edited_blocks)
+        return await core.replay(req.turn, req.edited_blocks, req.edited_system)
     except NemotronUnavailable as e:
         raise HTTPException(status_code=502, detail=f"Nemotron unavailable: {e}")
 

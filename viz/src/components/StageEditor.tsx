@@ -16,13 +16,52 @@ const VOICES = [
   { id: "LFZvm12tW_z0xfGo", label: "Kent", hint: "US · relaxed male" },
   { id: "ubuXFxVQwVYnZQhy", label: "Eva", hint: "GB · dynamic female" },
   { id: "m86j6D7UZpGzHsNu", label: "Jack", hint: "GB · helpful male" },
-  { id: "axlOaUiFyOZhy4nv", label: "Leo", hint: "FR · warm male" },
+  { id: "axlOaUiFyOZhy4nv", label: "Leo 🇫🇷🥖", hint: "FR · warm male" },
 ];
 
-export function StageEditor({ kind, turn }: { kind: Stage; turn: Turn }) {
+export function StageEditor({
+  kind,
+  turn,
+  eventId,
+}: {
+  kind: Stage;
+  turn: Turn;
+  eventId?: string;
+}) {
   if (kind === "llm") return <LlmEditor turn={turn} />;
   if (kind === "stt") return <SttEditor turn={turn} />;
+  if (kind === "tool") return <ToolEditor turn={turn} eventId={eventId} />;
   return <TtsEditor turn={turn} />;
+}
+
+// TOOL stage: show the tool call's name, arguments, and result.
+function ToolEditor({ turn, eventId }: { turn: Turn; eventId?: string }) {
+  const idx = parseInt(eventId?.match(/-tool-(\d+)$/)?.[1] ?? "0", 10);
+  const tc = turn.tool_calls?.[idx];
+  if (!tc) {
+    return (
+      <div className="editor-pane">
+        <div className="editor-title">
+          <span className="stage-dot" style={{ background: "#0d9488" }} /> TOOL
+        </div>
+        <div className="heat-hint">No tool data on this event.</div>
+      </div>
+    );
+  }
+  const dur = tc.t0 != null && tc.t1 != null ? `${tc.t1 - tc.t0} ms` : "";
+  return (
+    <div className="editor-pane">
+      <div className="editor-title">
+        <span className="stage-dot" style={{ background: "#0d9488" }} />
+        TOOL — <code>{tc.name}</code>
+        {dur && <span className="muted-note" style={{ margin: 0 }}>· {dur}</span>}
+      </div>
+      <div className="resp-label">arguments</div>
+      <div className="resp-text mono">{tc.args || "—"}</div>
+      <div className="resp-label" style={{ marginTop: 12 }}>result</div>
+      <div className="resp-text mono">{tc.result || "—"}</div>
+    </div>
+  );
 }
 
 // STT stage: confidence + edit the transcript + re-run the agent on the new words.

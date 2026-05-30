@@ -22,14 +22,25 @@ class WSHub:
         self.clients: set = set()
         self.backlog: list[str] = []
         self._server = None
+        # Set by the viz over the WS before a "resume from here" call: the
+        # conversation history to seed the next connection with. run_bot consumes
+        # and clears it on_client_connected.
+        self.pending_seed: list | None = None
 
     async def _handler(self, ws, *_):  # *_ tolerates older websockets (ws, path)
         self.clients.add(ws)
         for m in self.backlog:
             await ws.send(m)
         try:
-            async for _msg in ws:  # we don't expect client->server traffic
-                pass
+            async for raw in ws:  # control messages from the viz (e.g. resume seed)
+                try:
+                    obj = json.loads(raw)
+                except Exception:  # noqa: BLE001
+                    continue
+                if obj.get("type") == "seed":
+                    self.pending_seed = obj.get("messages") or []
+                elif obj.get("type") == "seed_clear":
+                    self.pending_seed = None
         finally:
             self.clients.discard(ws)
 
