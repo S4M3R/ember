@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ember — how attribution works</title>
+<style>
+  :root{
+    --bg:#0b0c10; --panel:#131520; --line:#262a3a; --text:#e7e9f0; --muted:#8b91a6;
+    --accent:#ff7a18; --accent2:#f72585; --cyan:#4cc9f0; --pass:#3ddc97;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:radial-gradient(1200px 600px at 70% -10%,#16131f 0%,var(--bg) 55%);
+    color:var(--text); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.55;
+  }
+  .wrap{max-width:1000px; margin:0 auto; padding:40px 28px 80px}
+  header{display:flex; align-items:center; gap:14px; margin-bottom:6px}
+  .logo{font-size:30px; color:var(--accent); filter:drop-shadow(0 0 12px rgba(255,122,24,.6))}
+  h1{font-size:26px; margin:0}
+  .sub{color:var(--muted); font-size:14px; margin:2px 0 0}
+  h2{margin:46px 0 6px; font-size:19px}
+  .num{color:var(--accent); font-family:var(--mono)}
+  p{color:#cbd0de; font-size:15px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:18px 18px 8px; margin-top:14px}
+  .mermaid{margin:0 auto; text-align:center}
+  code{font-family:var(--mono); background:#1b1d2a; padding:1px 6px; border-radius:6px; font-size:13px; color:#ffd9b0}
+  .key{display:flex; gap:18px; flex-wrap:wrap; margin:10px 0 0; font-size:13px; color:var(--muted)}
+  .key b{color:var(--text)}
+  .real{background:rgba(61,220,151,.08); border:1px solid rgba(61,220,151,.35); border-radius:12px; padding:12px 16px; margin-top:16px; font-family:var(--mono); font-size:13px}
+  .real b{color:var(--pass)}
+  .caveats{border-left:3px solid var(--accent2); padding:4px 0 4px 16px; margin-top:18px}
+  .caveats li{color:#cbd0de; font-size:14px; margin:6px 0}
+  footer{margin-top:50px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); padding-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">&#9680;</span>
+    <div>
+      <h1>How Ember attribution works</h1>
+      <p class="sub">counterfactual ablation, scored by log-likelihood drop on Nemotron</p>
+    </div>
+  </header>
+
+  <p>The question <em>"which prompt block caused this response?"</em> is a counterfactual:
+  if I remove a block, how much less likely does the model's actual reply become? A big drop
+  means that block was doing the work.</p>
+
+  <h2><span class="num">1.</span> The attribution algorithm</h2>
+  <p>Score the real reply once with the whole prompt, then once with each block knocked out.
+  Biggest drop wins.</p>
+  <div class="card">
+  <pre class="mermaid">
+flowchart TD
+    A["Turn<br/>response R + system blocks b1..bk"] --> B["Render full prompt<br/>## ROLE ... ## TONE ..."]
+    B --> C["Baseline score<br/>logP(R | full prompt)"]
+    B --> D{"Ablate each block<br/>parallel, K=8"}
+    D --> E1["remove b1<br/>logP(R | prompt minus b1)"]
+    D --> E2["remove b2<br/>logP(R | prompt minus b2)"]
+    D --> E3["remove bk<br/>logP(R | prompt minus bk)"]
+    C --> F["drop_i = baseline - ablated_i"]
+    E1 --> F
+    E2 --> F
+    E3 --> F
+    F --> G["clamp negatives to 0<br/>score_i = drop_i / max(drop)"]
+    G --> H["sort by score, 0..1 per block"]
+    H --> I["Heatmap: interpolateInferno<br/>top block glows"]
+    style C fill:#1b3a5b,stroke:#4cc9f0,color:#fff
+    style D fill:#5b1b3a,stroke:#f72585,color:#fff
+    style I fill:#5b3a1b,stroke:#ff7a18,color:#fff
+  </pre>
+  </div>
+
+  <h2><span class="num">2.</span> How each score is computed (the vLLM echo trick)</h2>
+  <p>No text is generated. <code>echo=true, max_tokens=0</code> makes vLLM do a single forward
+  pass and report the log-probabilities of tokens that are already there. That is why K+1
+  scorings finish in about a second instead of K full generations.</p>
+  <div class="card">
+  <pre class="mermaid">
+sequenceDiagram
+    participant A as attribute.py
+    participant N as Nemotron client
+    participant V as vLLM /v1/completions
+    Note over A,V: Goal = logP(R | prompt_variant), no generation
+    A->>N: response_loglik(prompt, R)
+    N->>V: echo(prompt only)<br/>echo=true, max_tokens=0
+    V-->>N: tokens[] for prompt
+    Note right of N: boundary = number of prompt tokens
+    N->>V: echo(prompt + R)<br/>echo=true, max_tokens=0
+    V-->>N: token_logprobs[] for whole sequence
+    N->>N: sum token_logprobs[boundary:]<br/>= logP of response tokens
+    N-->>A: scalar log-likelihood
+  </pre>
+  </div>
+
+  <h2><span class="num">3.</span> Where it sits in the live system</h2>
+  <div class="card">
+  <pre class="mermaid">
+flowchart LR
+    subgraph agent["agent (Pipecat)"]
+        OBS["EmberObserver"]
+    end
+    subgraph viz["viz (React)"]
+        TL["Turn timeline"]
+        HM["Prompt heatmap"]
+    end
+    subgraph attr["attribution service"]
+        ALG["ablate + log-likelihood"]
+    end
+    NEM["Nemotron vLLM"]
+    OBS -->|"turn over WS :8765"| TL
+    TL -->|"click a turn"| HM
+    HM -->|"POST /attribute"| ALG
+    ALG -->|"echo-score x K"| NEM
+    NEM --> ALG
+    ALG -->|"per-block scores 0..1"| HM
+  </pre>
+  </div>
+
+  <div class="real">
+    Live run, real numbers: baseline <b>-65.293</b> &nbsp;|&nbsp;
+    ROLE drop <b>1.28 &rarr; 100%</b> &nbsp; TONE <b>0.74 &rarr; 57%</b> &nbsp;
+    CATALOG / DELIVERY / ESCALATION negative &rarr; <b>0%</b> &nbsp; (all 8 scored in ~1s)
+  </div>
+
+  <h2><span class="num">4.</span> Honest caveats</h2>
+  <ul class="caveats">
+    <li>It scores the log-likelihood of the <b>exact response string</b>, not the failure
+      <em>behavior</em>. "Issued a refund" is a behavior; we attribute a specific sentence.</li>
+    <li><b>Single-block leave-one-out</b> misses interactions: blocks change how each other read.</li>
+    <li>Ablation breaks prompt coherence, and text-completion scoring only approximates the
+      chat-template probability. Consistent across ablations, so the <em>ranking</em> holds, but
+      it is a directional proxy, not a causal proof.</li>
+    <li>Drops are small and the load-balanced fleet adds noise (why ROLE/TONE swap run-to-run).</li>
+  </ul>
+  <p>Planned upgrade: a second <b>Cekura-gated</b> mode &mdash; ablate a block, re-run, does Cekura
+  still fail? That attributes the behavior instead of the string.</p>
+
+  <footer>Ember &middot; YC Voice Agents Hackathon &middot; attribution = ablate + log-likelihood drop on NVIDIA Nemotron</footer>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'dark',
+    themeVariables:{
+      background:'#131520', primaryColor:'#1b1d2a', primaryBorderColor:'#3a3f55',
+      primaryTextColor:'#e7e9f0', lineColor:'#8b91a6', fontSize:'15px',
+      fontFamily:'ui-monospace, Menlo, Consolas, monospace'
+    }
+  });
+</script>
+</body>
+</html>

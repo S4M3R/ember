@@ -1,0 +1,16 @@
+[project]
+name = "ember-attribution"
+version = "0.1.0"
+description = "Counterfactual prompt-attribution service for voice agents (ablate + log-likelihood drop)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+    "websockets>=13",
+]
+
+[tool.uv]
+package = false

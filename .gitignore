@@ -1,0 +1,26 @@
+# secrets
+.env
+*.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.uv/
+
+# node
+node_modules/
+viz/dist/
+viz/.vite/
+
+# sessions / artifacts
+server/sessions/
+.gstack/
+.DS_Store
+
+# internal / not for publish
+hackathon-context.md
+FULL-REAL-RUNBOOK.md
+
+# build artifacts
+viz/tsconfig.tsbuildinfo
