@@ -37,3 +37,15 @@ export async function replay(
 export async function synthesize(text: string, voice: string): Promise<SynthesizeResult> {
   return post<SynthesizeResult>("/synthesize", { text, voice });
 }
+
+// Hand the call off to Claude Code: opens a terminal running `claude` seeded with
+// the Cekura result + the notes the agent took. Returns the briefing file path.
+export interface DelegatePayload {
+  notes: string[];
+  cekura: unknown;
+  verdict?: string;
+  transcript?: { role: string; text: string }[];
+}
+export async function delegateToClaude(p: DelegatePayload): Promise<{ ok: boolean; path: string; hint?: string }> {
+  return post("/delegate-to-claude", p);
+}

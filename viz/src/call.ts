@@ -9,8 +9,17 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 export const AGENT_OFFER_URL =
   (import.meta.env.VITE_AGENT_URL as string) || "/agent/api/offer";
 
-export const callClient = new PipecatClient({
-  transport: new SmallWebRTCTransport(),
-  enableMic: true,
-  enableCam: false,
-});
+// Build a brand-new client (and transport) for each call. Reusing one whose
+// peer connection died abnormally (mic glitch -> "Media stream error") leaves
+// the transport unable to create a fresh offer, so the next call hangs in
+// "connecting". A fresh transport per call avoids that entirely.
+export function createCallClient(): PipecatClient {
+  return new PipecatClient({
+    transport: new SmallWebRTCTransport(),
+    enableMic: true,
+    enableCam: false,
+  });
+}
+
+// Initial client for first mount.
+export const callClient = createCallClient();

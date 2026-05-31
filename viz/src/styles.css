@@ -315,6 +315,16 @@ pre.trace-body { margin: 0; max-height: 200px; overflow: auto; font-size: 12px; 
 .tl-resume:disabled { opacity: .38; cursor: not-allowed; }
 .tl-hint { text-transform: none; letter-spacing: 0; font-size: 11px; opacity: .8; }
 .tl-time { font-family: var(--mono); color: var(--ink); font-size: 12px; }
+/* "Resume from here" armed banner — sits above the timeline until Start call. */
+.resume-banner { display: flex; align-items: center; gap: 12px; margin: 0 22px 8px;
+  padding: 8px 14px; border-radius: 10px; font-size: 13px; color: #0b6b62;
+  background: color-mix(in srgb, var(--tool, #0d9488) 12%, white);
+  border: 1px solid color-mix(in srgb, var(--tool, #0d9488) 40%, transparent); }
+.resume-banner span { flex: 1; }
+.resume-cancel { cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line-strong);
+  background: var(--grad-surface); color: var(--body); }
+.resume-cancel:hover { border-color: var(--tool, #0d9488); color: #0b6b62; }
 .tl-zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 .tl-zoom button { cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; width: 26px; height: 24px;
   border: 1px solid var(--line-strong); background: var(--grad-surface); color: var(--ink); border-radius: 7px;
@@ -358,6 +368,13 @@ pre.trace-body { margin: 0; max-height: 200px; overflow: auto; font-size: 12px; 
 .tl-tool-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
 .tl-rec { position: absolute; top: 5px; bottom: 5px; border-radius: 6px; z-index: 1; overflow: hidden;
   background: var(--audio); display: flex; align-items: center; padding: 0 10px; box-shadow: var(--sh-inset); }
+.tl-rec.live { box-shadow: var(--sh-inset), 0 0 10px rgba(160,106,31,.4); }
+/* Pre-branch audio on a resumed call: dimmed so the live continuation reads as the active segment. */
+.tl-rec.prior { opacity: .5; filter: saturate(.7); }
+/* Branch point: where the prior audio ends and the live continuation begins. */
+.tl-split { position: absolute; top: -2px; bottom: -2px; width: 2px; z-index: 4; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, var(--accent) 0 4px, transparent 4px 8px); opacity: .85; }
+.tl-split::before { content: "⑂"; position: absolute; top: -14px; left: -5px; color: var(--accent); font-size: 11px; }
 .tl-rec-label { font-family: var(--mono); font-size: 11px; font-weight: 700; color: #fff;
   text-shadow: 0 1px 1px rgba(0,0,0,.35); white-space: nowrap; }
 .tl-wave { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -369,3 +386,74 @@ pre.trace-body { margin: 0; max-height: 200px; overflow: auto; font-size: 12px; 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Cekura auto-evaluation CHIP (top-right of the header) ──────────────── */
+.cekura-chip-wrap { position: relative; }
+.cekura-chip { display: inline-flex; align-items: center; gap: 7px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 11px 5px 7px; box-shadow: var(--sh-sm); font: inherit; }
+.cekura-logo { width: 16px; height: 16px; border-radius: 4px; flex: 0 0 auto; object-fit: contain; }
+.cekura-title { font-weight: 700; font-size: 12px; color: var(--ink); letter-spacing: .01em; }
+.cekura-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.cekura-status.cekura-muted { color: var(--muted-soft); }
+.cekura-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  animation: cekura-pulse 1s ease-in-out infinite; }
+@keyframes cekura-pulse { 0%,100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+.cekura-err-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fail); font-weight: 600; }
+.cekura-pips { display: inline-flex; align-items: center; gap: 3px; }
+.cekura-pip { width: 7px; height: 7px; border-radius: 2px; }
+
+/* expanded breakdown popover */
+.cekura-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
+  min-width: 240px; max-width: 320px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 9px 11px 10px; box-shadow: var(--sh-md, var(--sh-sm)); }
+.cekura-pop-head { display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 8px; }
+.cekura-pop-head a { font-size: 11px; color: var(--accent); text-decoration: none; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.cekura-pop-head a:hover { text-decoration: underline; }
+.cekura-metric { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+.cekura-swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.cekura-name { color: var(--body); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cekura-value { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto;
+  font-family: var(--mono); font-size: 11px; font-weight: 600; }
+
+/* ── Header right cluster: notes chip · cekura chip · open-in-claude ─────── */
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+
+/* Notes chip (mirrors the Cekura chip) */
+.notes-chip { cursor: default; }
+.notes-ico { color: var(--llm); }
+.notes-count { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: color-mix(in srgb, var(--llm) 14%, transparent); color: var(--llm);
+  font-family: var(--mono); font-size: 11px; font-weight: 700; }
+.notes-pop { min-width: 250px; max-width: 340px; }
+.notes-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; font-size: 12px; }
+.notes-bullet { flex: 0 0 auto; min-width: 17px; height: 17px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 5px;
+  background: color-mix(in srgb, var(--llm) 12%, transparent); color: var(--llm);
+  font-family: var(--mono); font-size: 10px; font-weight: 700; }
+.notes-text { color: var(--body); line-height: 1.4; }
+
+/* Open-in-Claude button */
+.claude-btn { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font: inherit;
+  font-size: 12px; font-weight: 700; letter-spacing: .01em; padding: 6px 13px; border-radius: 999px;
+  border: 1px solid transparent; color: var(--on-accent); background: var(--grad-ink);
+  box-shadow: var(--sh-ink); transition: filter .12s, transform .08s; }
+.claude-btn:hover:not(:disabled) { filter: brightness(1.12); }
+.claude-btn:active:not(:disabled) { transform: translateY(1px); }
+.claude-btn:disabled { opacity: .42; cursor: not-allowed; box-shadow: var(--sh-xs); }
+.claude-btn svg { flex: 0 0 auto; }
+
+/* ── User feedback on an LLM response (LLM tab) + its timeline marker ────── */
+.fb-block { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+.fb-head { display: flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--llm); margin-bottom: 7px; }
+.fb-head svg { color: var(--llm); }
+.fb-saved { margin-left: auto; color: var(--pass); font-weight: 700; letter-spacing: 0; text-transform: none; }
+.fb-text { width: 100%; }
+
+/* feedback flag on the LLM timeline bar */
+.tl-event.has-feedback { box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 0 0 1.5px var(--accent), var(--sh-sm); }
+.tl-fb-flag { position: absolute; top: -4px; right: -4px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); border: 1.5px solid var(--surface); box-shadow: 0 0 6px rgba(255,102,0,.6); z-index: 4; }

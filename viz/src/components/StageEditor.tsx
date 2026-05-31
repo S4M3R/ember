@@ -23,12 +23,16 @@ export function StageEditor({
   kind,
   turn,
   eventId,
+  feedback,
+  onFeedback,
 }: {
   kind: Stage;
   turn: Turn;
   eventId?: string;
+  feedback?: string;
+  onFeedback?: (text: string) => void;
 }) {
-  if (kind === "llm") return <LlmEditor turn={turn} />;
+  if (kind === "llm") return <LlmEditor turn={turn} feedback={feedback} onFeedback={onFeedback} />;
   if (kind === "stt") return <SttEditor turn={turn} />;
   if (kind === "tool") return <ToolEditor turn={turn} eventId={eventId} />;
   return <TtsEditor turn={turn} />;

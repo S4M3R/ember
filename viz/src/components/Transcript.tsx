@@ -14,7 +14,21 @@ import { AGENT_OFFER_URL } from "../call";
 import type { ToolCall, Turn } from "../types";
 import { YcLogo } from "./YcLogo";
 
-type LiveMsg = { role: "user" | "assistant"; text: string };
+// Seeded messages (prior conversation on a resumed call) carry their own tool
+// calls inline; live messages map to streamed turns by index (see render below).
+type LiveMsg = { role: "user" | "assistant"; text: string; tools?: ToolCall[]; seeded?: boolean };
+
+// Flatten kept turns into transcript messages to seed a resumed call's live view,
+// so it continues from the branch point instead of restarting empty.
+function turnsToMsgs(turns: Turn[]): LiveMsg[] {
+  const out: LiveMsg[] = [];
+  for (const t of turns) {
+    if (t.user_text?.trim()) out.push({ role: "user", text: t.user_text.trim(), seeded: true });
+    if (t.response?.trim())
+      out.push({ role: "assistant", text: t.response.trim(), tools: t.tool_calls, seeded: true });
+  }
+  return out;
+}
 
 function toolIcon(name: string) {
   if (name === "final_report") return <ClipboardText weight="fill" />;
@@ -70,10 +84,12 @@ function errText(e: any): string {
 
 export function Transcript({
   turns,
+  resuming,
   activeTurnId,
   onPickTurn,
 }: {
   turns: Turn[];
+  resuming?: boolean;
   activeTurnId?: string;
   onPickTurn: (turnId: string) => void;
 }) {
@@ -171,7 +187,9 @@ export function Transcript({
       await client.disconnect();
       return;
     }
-    setMsgs([]);
+    // On a resumed call, keep the prior conversation in view and continue from the
+    // branch point; on a fresh call, start empty.
+    setMsgs(resuming ? turnsToMsgs(turns) : []);
     setInterim("");
     setMuted(false);
     setBotSpeaking(false);
@@ -238,8 +256,11 @@ export function Transcript({
                 const speaking = m.role === "assistant" && botSpeaking && i === msgs.length - 1;
                 let chips = null;
                 if (m.role === "assistant") {
-                  chips = <ToolChips calls={liveTurns[agentSeen]?.tool_calls} />;
-                  agentSeen++;
+                  // Seeded (pre-branch) replies carry their own tool calls; live
+                  // replies map to streamed turns by order of appearance.
+                  const calls = m.seeded ? m.tools : liveTurns[agentSeen]?.tool_calls;
+                  if (!m.seeded) agentSeen++;
+                  chips = <ToolChips calls={calls} />;
                 }
                 return (
                   <div key={i} className={`bubble ${m.role}`}>

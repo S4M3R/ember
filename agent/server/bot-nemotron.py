@@ -18,8 +18,10 @@ Run the bot using::
     uv run bot-nemotron.py
 """
 
+import asyncio
 import os
 import random
+import time
 from datetime import date
 
 import aiohttp
@@ -62,6 +64,10 @@ from hub import shared_hub
 from observer import EmberObserver
 
 load_dotenv(override=True)
+
+# Strong refs to fire-and-forget background tasks (e.g. post-call Cekura eval),
+# so the event loop doesn't garbage-collect them mid-run.
+_BG_TASKS: set = set()
 
 
 async def get_call_info(call_sid: str) -> dict:
@@ -336,17 +342,23 @@ async def run_bot(
         # Replay it into the context so the partner remembers everything up to the
         # branch point, then let the founder keep talking (no greeting kickoff).
         seed = getattr(ember_hub, "pending_seed", None) if ember_hub else None
+        logger.info(f"on_connected: hub={ember_hub is not None} seed={len(seed) if seed else 0} msgs")
         if seed:
+            offset_ms = int(getattr(ember_hub, "pending_offset_ms", 0) or 0)
             ember_hub.pending_seed = None  # consume once
+            ember_hub.pending_offset_ms = 0
             for msg in seed:
                 if isinstance(msg, dict) and msg.get("role") in ("user", "assistant") and msg.get("content"):
                     context.add_message({"role": msg["role"], "content": msg["content"]})
             # Mirror the history into the observer so replays of resumed turns
-            # carry the full prior conversation.
+            # carry the full prior conversation, and shift its clock back by the
+            # branch offset so the continuation's turns render AFTER the kept ones.
             for _obs in ember_observers:
                 _obs.history = [m for m in seed
                                 if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
-            logger.info(f"Resumed from seed: {len(seed)} prior messages")
+                if offset_ms > 0:
+                    _obs.call_start = time.time() - offset_ms / 1000.0
+            logger.info(f"Resumed from seed: {len(seed)} prior messages, offset {offset_ms}ms")
             # If the branch point ends on the founder, answer it; otherwise wait.
             if seed and seed[-1].get("role") == "user":
                 await worker.queue_frames([LLMRunFrame()])
@@ -363,7 +375,25 @@ async def run_bot(
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
+        # Tear down the worker FIRST so the connection is freed immediately and a
+        # new call (e.g. a "resume from here") can start right away. The Cekura
+        # fallback evaluation polls for up to a minute — running it inline here
+        # blocked the next connection and left it stuck "dialing".
         await worker.cancel()
+        # Fallback eval in the background: if the call ended without an explicit
+        # verdict/end-intent, still score whatever was said. finalize() reads the
+        # observer's transcript + hub, both of which outlive the worker.
+        async def _cekura_finalize():
+            for _obs in ember_observers:
+                if not hasattr(_obs, "finalize"):
+                    continue
+                try:
+                    await _obs.finalize()
+                except Exception as e:  # noqa: BLE001 - best-effort
+                    logger.warning(f"Cekura finalize on disconnect failed: {e}")
+        task = asyncio.create_task(_cekura_finalize())
+        _BG_TASKS.add(task)            # keep a ref so the task isn't GC'd mid-run
+        task.add_done_callback(_BG_TASKS.discard)
 
     runner = WorkerRunner(handle_sigint=False)
 

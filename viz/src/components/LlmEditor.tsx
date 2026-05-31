@@ -1,4 +1,4 @@
-import { CaretDown, CaretRight, Play } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, NotePencil, Play } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
@@ -16,7 +16,15 @@ function renderSystem(blocks: Block[]): string {
 // The LLM stage as one editable call trace: the system prompt (collapsed by
 // default, one free-text editor) plus the user/assistant messages — all
 // editable. Replay re-runs the turn with whatever you changed.
-export function LlmEditor({ turn }: { turn: Turn }) {
+export function LlmEditor({
+  turn,
+  feedback,
+  onFeedback,
+}: {
+  turn: Turn;
+  feedback?: string;
+  onFeedback?: (text: string) => void;
+}) {
   const origSystem = useMemo(() => renderSystem(turn.system_blocks), [turn.system_blocks]);
   const origMsgs = useMemo<Message[]>(() => {
     const convo = (turn.messages ?? []).filter((m) => m.role !== "system");
@@ -166,6 +174,24 @@ export function LlmEditor({ turn }: { turn: Turn }) {
                 ? "Response changed with your edits."
                 : "Same response — your edits didn't move the output."}
             </motion.div>
+          )}
+
+          {onFeedback && (
+            <div className="fb-block">
+              <div className="fb-head">
+                <NotePencil weight="duotone" size={14} />
+                <span>your feedback on this response</span>
+                {feedback?.trim() ? <span className="fb-saved">saved ✓</span> : null}
+              </div>
+              <textarea
+                className="block-edit-text fb-text"
+                value={feedback ?? ""}
+                onChange={(e) => onFeedback(e.target.value)}
+                rows={3}
+                spellCheck={false}
+                placeholder="What's wrong (or right) with this reply? Added to the header and handed to Claude."
+              />
+            </div>
           )}
         </section>
       </div>

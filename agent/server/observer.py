@@ -198,6 +198,10 @@ class EmberObserver(BaseObserver):
         # agent's closing line has been spoken. Async, takes no args.
         self.on_tool_end = None
         self._ended = False
+        self._evaluated = False         # guard: Cekura auto-eval runs at most once
+        # Cekura-format transcript accumulated across the call, streamed to the
+        # observability endpoint when the call ends (see finalize()).
+        self.transcript: list[dict] = []
         self.history: list[dict] = []   # prior {role, content} messages
         self.index = 0
         self.session = uuid.uuid4().hex[:6]  # unique per connection -> no id collisions
@@ -448,6 +452,21 @@ class EmberObserver(BaseObserver):
                 await self.on_tool_end()
             except Exception as e:  # noqa: BLE001 - best-effort hangup
                 print(f"[ember] hangup failed: {e!r}", flush=True)
+        # Call's over — kick off Cekura evaluation (non-blocking; guarded so it
+        # runs once whether we end via intent or client disconnect).
+        if end:
+            asyncio.create_task(self.finalize())
+
+    async def finalize(self) -> None:
+        """Run Cekura's evaluation on the finished call and stream feedback to the viz."""
+        if self._evaluated:
+            return
+        self._evaluated = True
+        try:
+            import cekura_observe
+            await cekura_observe.evaluate(list(self.transcript), self.hub)
+        except Exception as e:  # noqa: BLE001 - eval must never crash the call
+            print(f"[ember] cekura finalize failed: {e!r}", flush=True)
 
     async def _broadcast_recording(self):
         try:
@@ -526,5 +545,19 @@ class EmberObserver(BaseObserver):
             self.history.append({"role": "user", "content": user_text})
         self.history.append({"role": "assistant", "content": response})
         self.index += 1
+        # Accumulate the Cekura-format transcript (seconds from call start) for
+        # the end-of-call auto-evaluation. Caller = "Testing Agent", agent = "Main
+        # Agent". Times are best-effort and clamped to be non-negative/increasing.
+        def secs(t):
+            return max(0.0, round((t - self.call_start), 2)) if t else 0.0
+        if user_text:
+            us = secs(stt_start)
+            ue = max(secs(stt_end), us)
+            self.transcript.append({"role": "Testing Agent", "content": user_text,
+                                    "start_time": us, "end_time": ue})
+        a0 = secs(self.t_tts0) or secs(self.t_llm1)
+        a1 = max(secs(now), a0)
+        self.transcript.append({"role": "Main Agent", "content": response,
+                                "start_time": a0, "end_time": a1})
         await self.hub.broadcast({"type": "turn", "turn": turn})
         return turn

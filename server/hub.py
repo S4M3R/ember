@@ -23,9 +23,11 @@ class WSHub:
         self.backlog: list[str] = []
         self._server = None
         # Set by the viz over the WS before a "resume from here" call: the
-        # conversation history to seed the next connection with. run_bot consumes
-        # and clears it on_client_connected.
+        # conversation history to seed the next connection with, and how far to
+        # offset the new call's clock so its turns land after the branch point.
+        # run_bot consumes and clears them on_client_connected.
         self.pending_seed: list | None = None
+        self.pending_offset_ms: int = 0
 
     async def _handler(self, ws, *_):  # *_ tolerates older websockets (ws, path)
         self.clients.add(ws)
@@ -39,8 +41,12 @@ class WSHub:
                     continue
                 if obj.get("type") == "seed":
                     self.pending_seed = obj.get("messages") or []
+                    self.pending_offset_ms = int(obj.get("offset_ms") or 0)
+                    print(f"[hub] pending_seed set: {len(self.pending_seed)} msgs, "
+                          f"offset {self.pending_offset_ms}ms", flush=True)
                 elif obj.get("type") == "seed_clear":
                     self.pending_seed = None
+                    self.pending_offset_ms = 0
         finally:
             self.clients.discard(ws)
 

@@ -81,6 +81,25 @@ export interface ReplayResult {
   method: string;
 }
 
+// Cekura auto-evaluation feedback, streamed over the hub when a call ends.
+export interface CekuraMetric {
+  name: string;
+  type: string;
+  score: number | null;
+  value: string | null;
+  display: string; // pre-formatted for display (e.g. "Pass", "4.5/5", "612 ms")
+  t: number | null; // 0..1 for heatmap coloring, or null when not applicable
+  pass: boolean | null;
+}
+
+export interface CekuraFeedbackState {
+  status: "evaluating" | "done" | "error";
+  metrics: CekuraMetric[];
+  call_log_id?: number;
+  dashboard_url?: string;
+  message?: string;
+}
+
 export interface SynthesizeResult {
   voice: string;
   audio: string; // data: WAV URL

@@ -40,6 +40,10 @@ export function Timeline({
   onSeek,
   hasRecording,
   recordingUrl,
+  recordingDurationMs,
+  liveWave,
+  liveStartMs = 0,
+  feedbackTurns,
   canResume,
   onResumeHere,
 }: {
@@ -56,6 +60,12 @@ export function Timeline({
   onSeek: (ms: number) => void;
   hasRecording: boolean;
   recordingUrl?: string;
+  recordingDurationMs?: number;
+  liveWave?: number[];
+  // Timeline ms where the live lane begins. >0 on a resumed call: the prior audio
+  // is kept up to here and the live continuation is anchored after it.
+  liveStartMs?: number;
+  feedbackTurns?: Set<string>;
   canResume: boolean;
   onResumeHere: () => void;
 }) {
@@ -144,39 +154,75 @@ export function Timeline({
             {TRACKS.map((stage) => (
               <div className="tl-lane" key={stage} onClick={seekFromClick}>
                 {stage === "audio" ? (
-                  hasRecording && (
-                    <div className="tl-rec" style={{ left: 0, width: posPct(total) }}
-                      title="full-call recording (mono) — click to seek, play above">
-                      {wave ? (
-                        <RecordingWave peaks={wave} />
-                      ) : (
-                        <span className="tl-rec-label">call recording</span>
+                  live ? (
+                    <>
+                      {/* Resumed branch: keep the prior recording's wave up to the
+                          branch point so the live continuation extends it rather
+                          than replacing it. */}
+                      {liveStartMs > 0 && wave && wave.length > 1 && recordingDurationMs ? (
+                        <div className="tl-rec prior" style={{ left: 0, width: posPct(liveStartMs) }}
+                          title="conversation before the branch">
+                          <RecordingWave
+                            peaks={wave.slice(
+                              0,
+                              Math.max(1, Math.round(wave.length * Math.min(1, liveStartMs / recordingDurationMs))),
+                            )}
+                          />
+                        </div>
+                      ) : null}
+                      {/* Live continuation, anchored at the branch point (left:0 on
+                          a fresh, non-resumed call). */}
+                      {liveWave && liveWave.length > 1 && (
+                        <div className="tl-rec live"
+                          style={{ left: posPct(liveStartMs), width: posPct(Math.max(0, currentMs - liveStartMs)) }}
+                          title="live call audio">
+                          <RecordingWave peaks={liveWave} />
+                        </div>
                       )}
-                    </div>
+                      {/* The split between prior audio and the live continuation. */}
+                      {liveStartMs > 0 && (
+                        <div className="tl-split" style={{ left: posPct(liveStartMs) }} title="branch point" />
+                      )}
+                    </>
+                  ) : (
+                    hasRecording && (
+                      <div className="tl-rec" style={{ left: 0, width: posPct(total) }}
+                        title="full-call recording (mono) — click to seek, play above">
+                        {wave ? (
+                          <RecordingWave peaks={wave} />
+                        ) : (
+                          <span className="tl-rec-label">call recording</span>
+                        )}
+                      </div>
+                    )
                   )
                 ) : (
                   <>
                     {events
                       .filter((e) => e.kind === stage)
-                      .map((e) => (
-                        <button
-                          key={e.id}
-                          className={`tl-event ${selectedId === e.id ? "selected" : ""}`}
-                          style={{
-                            left: posPct(e.t0),
-                            width: posPct(e.t1 - e.t0),
-                            minWidth: "5px",
-                            background: STAGE_COLOR[stage],
-                          }}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            onSelect(e.id);
-                          }}
-                          title={`${STAGE_LABEL[stage]} · ${fmt(e.t0)}–${fmt(e.t1)} · ${e.label}`}
-                        >
-                          <span className="tl-event-label">{e.label}</span>
-                        </button>
-                      ))}
+                      .map((e) => {
+                        const hasFeedback = stage === "llm" && !!feedbackTurns?.has(e.turnId);
+                        return (
+                          <button
+                            key={e.id}
+                            className={`tl-event ${selectedId === e.id ? "selected" : ""} ${hasFeedback ? "has-feedback" : ""}`}
+                            style={{
+                              left: posPct(e.t0),
+                              width: posPct(e.t1 - e.t0),
+                              minWidth: "5px",
+                              background: STAGE_COLOR[stage],
+                            }}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              onSelect(e.id);
+                            }}
+                            title={`${STAGE_LABEL[stage]} · ${fmt(e.t0)}–${fmt(e.t1)} · ${e.label}${hasFeedback ? " · has feedback" : ""}`}
+                          >
+                            <span className="tl-event-label">{e.label}</span>
+                            {hasFeedback && <span className="tl-fb-flag" title="you left feedback here" />}
+                          </button>
+                        );
+                      })}
                     {/* Tool calls annotate the LLM lane: instantaneous events, so
                         fixed-size pins anchored at t0 with the name always shown. */}
                     {stage === "llm" &&
