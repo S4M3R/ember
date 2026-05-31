@@ -3,9 +3,9 @@
 **Edit, replay & debug voice agent calls.** Built for the YC Voice Agents Hackathon
 (Cekura · Daily · NVIDIA · AWS · Twilio).
 
-[![Watch the 60-second demo](https://img.youtube.com/vi/sGRjSvqLtag/maxresdefault.jpg)](https://youtu.be/sGRjSvqLtag)
+[![Watch the demo](https://img.youtube.com/vi/sGRjSvqLtag/maxresdefault.jpg)](https://youtu.be/sGRjSvqLtag)
 
-▶️ **[Watch the demo (under 60s)](https://youtu.be/sGRjSvqLtag)**
+▶️ **[Watch the demo](https://youtu.be/sGRjSvqLtag)**
 
 ---
 
@@ -28,7 +28,7 @@ Real only: if the model is unreachable, the UI errors instead of fabricating.
 
 ## 2. Demo video
 
-**[youtu.be/sGRjSvqLtag](https://youtu.be/sGRjSvqLtag)** (under 60 seconds — a demo, not narration).
+**[youtu.be/sGRjSvqLtag](https://youtu.be/sGRjSvqLtag)** — a demo walkthrough of Ember.
 
 ## 3. How we used Cekura, Nemotron, and Pipecat
 
